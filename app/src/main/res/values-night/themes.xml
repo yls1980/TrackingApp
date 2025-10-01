@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base application theme for Compose (Dark) -->
+    <style name="Theme.TrackingApp" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@color/md_theme_dark_primary</item>
+    </style>
+</resources>
+
+

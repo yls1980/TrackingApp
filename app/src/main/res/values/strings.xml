@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Трекер маршрутов</string>
+    
+    <!-- Main Screen -->
+    <string name="start_recording">Начать запись</string>
+    <string name="stop_recording">Остановить запись</string>
+    <string name="recording">Запись идет</string>
+    <string name="not_recording">Запись остановлена</string>
+    
+    <!-- Statistics -->
+    <string name="duration">Длительность</string>
+    <string name="distance">Дистанция</string>
+    <string name="speed">Скорость</string>
+    <string name="avg_speed">Средняя скорость</string>
+    <string name="current_speed">Текущая скорость</string>
+    <string name="elevation_gain">Набор высоты</string>
+    
+    <!-- Units -->
+    <string name="km">км</string>
+    <string name="m">м</string>
+    <string name="kmh">км/ч</string>
+    <string name="ms">м/с</string>
+    <string name="hours">ч</string>
+    <string name="minutes">мин</string>
+    <string name="seconds">сек</string>
+    
+    <!-- Navigation -->
+    <string name="tracks">Маршруты</string>
+    <string name="settings">Настройки</string>
+    <string name="map">Карта</string>
+    
+    <!-- Track List -->
+    <string name="no_tracks">Нет сохраненных маршрутов</string>
+    <string name="delete_track">Удалить маршрут</string>
+    <string name="share_track">Поделиться</string>
+    <string name="export_gpx">Экспорт GPX</string>
+    <string name="export_geojson">Экспорт GeoJSON</string>
+    
+    <!-- Permissions -->
+    <string name="location_permission_required">Требуется разрешение на местоположение</string>
+    <string name="location_permission_rationale">Приложению необходимо разрешение на доступ к местоположению для записи GPS-треков</string>
+    <string name="background_location_permission_rationale">Для записи треков в фоновом режиме требуется разрешение на фоновое местоположение</string>
+    <string name="grant_permission">Предоставить разрешение</string>
+    <string name="permission_denied">Разрешение отклонено</string>
+    
+    <!-- Settings -->
+    <string name="location_accuracy">Точность местоположения</string>
+    <string name="location_interval">Интервал обновления</string>
+    <string name="accuracy_threshold">Порог точности</string>
+    <string name="export_format">Формат экспорта</string>
+    <string name="auto_pause">Авто-пауза</string>
+    
+    <!-- Notifications -->
+    <string name="notification_channel_name">Запись маршрута</string>
+    <string name="notification_channel_description">Уведомления о записи GPS-треков</string>
+    <string name="recording_notification_title">Запись маршрута</string>
+    <string name="recording_notification_content">Запись GPS-трека в процессе</string>
+    <string name="stop_recording_action">Остановить</string>
+    
+    <!-- Errors -->
+    <string name="error_location_unavailable">Местоположение недоступно</string>
+    <string name="error_export_failed">Ошибка экспорта</string>
+    <string name="error_import_failed">Ошибка импорта</string>
+    <string name="error_parsing_file">Ошибка парсинга файла</string>
+    
+    <!-- Success -->
+    <string name="track_saved">Маршрут сохранен</string>
+    <string name="track_exported">Маршрут экспортирован</string>
+    <string name="track_imported">Маршрут импортирован</string>
+    
+    <!-- File types -->
+    <string name="gpx_files">GPX файлы</string>
+    <string name="geojson_files">GeoJSON файлы</string>
+    <string name="all_files">Все файлы</string>
+    
+    <!-- Yandex Maps API Key placeholder -->
+    <string name="yandex_maps_key">6108f399-e3d2-47cf-94a6-06b421bb5bc1</string>
+</resources>
