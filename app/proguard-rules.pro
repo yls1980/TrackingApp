@@ -42,3 +42,12 @@
 # Keep data classes
 -keep class com.trackingapp.data.model.** { *; }
 
+# Support for 16 KB page sizes
+-keep class com.yandex.** { *; }
+-dontwarn com.yandex.**
+
+# Keep native libraries aligned for 16 KB pages
+-keep class * {
+    native <methods>;
+}
+

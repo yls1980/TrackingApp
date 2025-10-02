@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    
+    <!-- Фон (круг) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,24m-20,0a20,20 0,1 1,40 0a20,20 0,1 1,-40 0" />
+    
+    <!-- Тень -->
+    <path
+        android:fillColor="#20000000"
+        android:pathData="M24,26m-18,0a18,18 0,1 1,36 0a18,18 0,1 1,-36 0" />
+    
+    <!-- Смайлик -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M24,24m-16,0a16,16 0,1 1,32 0a16,16 0,1 1,-32 0" />
+    
+    <!-- Глаза -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M18,18m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
+    <path
+        android:fillColor="#000000"
+        android:pathData="M30,18m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
+    
+    <!-- Улыбка -->
+    <path
+        android:fillType="evenOdd"
+        android:strokeColor="#000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M18,28 Q24,34 30,28" />
+</vector>

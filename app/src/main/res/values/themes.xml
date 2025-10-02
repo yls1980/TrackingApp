@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Base application theme for Compose -->
-    <style name="Theme.TrackingApp" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.XTrack" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:statusBarColor">@color/md_theme_light_primary</item>
     </style>
 </resources>

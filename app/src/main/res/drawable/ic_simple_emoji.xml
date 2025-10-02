@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+    
+    <!-- Простой золотой круг -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M16,16m-12,0a12,12 0,1 1,24 0a12,12 0,1 1,-24 0" />
+    
+    <!-- Глаза -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M12,12m-1,0a1,1 0,1 1,2 0a1,1 0,1 1,-2 0" />
+    <path
+        android:fillColor="#000000"
+        android:pathData="M20,12m-1,0a1,1 0,1 1,2 0a1,1 0,1 1,-2 0" />
+    
+    <!-- Улыбка -->
+    <path
+        android:fillType="evenOdd"
+        android:strokeColor="#000000"
+        android:strokeWidth="1"
+        android:strokeLineCap="round"
+        android:pathData="M12,18 Q16,22 20,18" />
+</vector>

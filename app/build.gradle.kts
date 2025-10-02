@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.trackingapp"
+    namespace = "com.xtrack"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.trackingapp"
+        applicationId = "com.xtrack"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
@@ -19,6 +19,30 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+        
+        // Support for Yandex MapKit native libraries
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+        }
+        
+        // Ensure native libraries are properly packaged
+        packagingOptions {
+            jniLibs {
+                useLegacyPackaging = true
+            }
+            resources {
+                excludes += "/META-INF/{AL2.0,LGPL2.1}"
+                excludes += "**/libmagtsync.so"
+                excludes += "**/libqt*.so"
+                excludes += "**/libMEOW*.so"
+                excludes += "**/libmagtsync*"
+            }
+            jniLibs {
+                excludes += "**/libmagtsync.so"
+                excludes += "**/libqt*.so"
+                excludes += "**/libMEOW*.so"
+            }
         }
     }
 
@@ -48,6 +72,12 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            useLegacyPackaging = true
+        }
+        // Ensure all native libraries are included
+        pickFirsts += "**/libc++_shared.so"
+        pickFirsts += "**/libjsc.so"
     }
     
     lint {
@@ -73,6 +103,9 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3:1.2.0")
     implementation("androidx.compose.material:material-icons-extended")
+    
+    // Image loading
+    implementation("io.coil-kt:coil-compose:2.5.0")
     
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.7.5")

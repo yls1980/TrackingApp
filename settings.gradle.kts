@@ -15,6 +15,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "TrackingApp"
+rootProject.name = "xtrack"
 include(":app")
 
