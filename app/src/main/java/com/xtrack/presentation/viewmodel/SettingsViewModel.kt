@@ -120,6 +120,22 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun updateDistanceNotificationInterval(intervalMeters: Int) {
+        viewModelScope.launch {
+            val currentSettings = settings.value ?: return@launch
+            val updatedSettings = currentSettings.copy(distanceNotificationIntervalMeters = intervalMeters)
+            settingsRepository.updateSettings(updatedSettings)
+        }
+    }
+
+    fun updateDistanceNotificationsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            val currentSettings = settings.value ?: return@launch
+            val updatedSettings = currentSettings.copy(distanceNotificationsEnabled = enabled)
+            settingsRepository.updateSettings(updatedSettings)
+        }
+    }
+
     fun getLocationAccuracyOptions(): List<LocationAccuracyOption> {
         return listOf(
             LocationAccuracyOption(
@@ -171,6 +187,19 @@ class SettingsViewModel @Inject constructor(
         )
     }
 
+    fun getDistanceNotificationIntervalOptions(): List<DistanceNotificationOption> {
+        return (100..5000 step 100).map { meters ->
+            DistanceNotificationOption(
+                intervalMeters = meters,
+                displayText = if (meters >= 1000) {
+                    "${meters / 1000} км"
+                } else {
+                    "$meters м"
+                }
+            )
+        }
+    }
+
     data class LocationAccuracyOption(
         val accuracy: LocationAccuracy,
         val name: String,
@@ -190,6 +219,11 @@ class SettingsViewModel @Inject constructor(
     data class AccuracyThresholdOption(
         val thresholdMeters: Float,
         val name: String
+    )
+
+    data class DistanceNotificationOption(
+        val intervalMeters: Int,
+        val displayText: String
     )
 }
 

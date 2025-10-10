@@ -11,7 +11,8 @@ import javax.inject.Singleton
 @Singleton
 class TrackRepository @Inject constructor(
     private val trackDao: TrackDao,
-    private val trackPointDao: TrackPointDao
+    private val trackPointDao: TrackPointDao,
+    private val mapNoteRepository: MapNoteRepository
 ) {
     fun getAllTracks(): Flow<List<Track>> = trackDao.getAllTracks()
 
@@ -19,13 +20,33 @@ class TrackRepository @Inject constructor(
 
     suspend fun getCurrentRecordingTrack(): Track? = trackDao.getCurrentRecordingTrack()
 
+    suspend fun getLastIncompleteTrack(): Track? = trackDao.getLastIncompleteTrack()
+
     suspend fun insertTrack(track: Track) = trackDao.insertTrack(track)
 
     suspend fun updateTrack(track: Track) = trackDao.updateTrack(track)
 
-    suspend fun deleteTrack(track: Track) = trackDao.deleteTrack(track)
+    suspend fun deleteTrack(track: Track) {
+        // Сначала удаляем все заметки трека с медиа файлами
+        mapNoteRepository.deleteAllNotesWithMediaByTrackId(track.id)
+        
+        // Затем удаляем точки трека
+        trackPointDao.deleteTrackPointsByTrackId(track.id)
+        
+        // Наконец удаляем сам трек
+        trackDao.deleteTrack(track)
+    }
 
-    suspend fun deleteTrackById(trackId: String) = trackDao.deleteTrackById(trackId)
+    suspend fun deleteTrackById(trackId: String) {
+        // Сначала удаляем все заметки трека с медиа файлами
+        mapNoteRepository.deleteAllNotesWithMediaByTrackId(trackId)
+        
+        // Затем удаляем точки трека
+        trackPointDao.deleteTrackPointsByTrackId(trackId)
+        
+        // Наконец удаляем сам трек
+        trackDao.deleteTrackById(trackId)
+    }
 
     fun getTrackPoints(trackId: String): Flow<List<TrackPoint>> = trackPointDao.getTrackPoints(trackId)
 

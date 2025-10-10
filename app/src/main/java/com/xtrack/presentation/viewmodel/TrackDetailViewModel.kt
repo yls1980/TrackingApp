@@ -82,16 +82,19 @@ class TrackDetailViewModel @Inject constructor(
         return try {
             val gpxContent = gpxGenerator.generateGpx(track, trackPoints)
             val fileName = "track_${track.id}_${getCurrentDateString()}.gpx"
-            val tracksDir = File(context.getExternalFilesDir(null), "tracks")
-            if (!tracksDir.exists()) {
-                tracksDir.mkdirs()
+            
+            // Создаем файл в кэш-директории для временного доступа
+            val cacheDir = File(context.cacheDir, "tracks")
+            if (!cacheDir.exists()) {
+                cacheDir.mkdirs()
             }
-            val file = File(tracksDir, fileName)
+            val file = File(cacheDir, fileName)
             
             FileOutputStream(file).use { fos ->
                 fos.write(gpxContent.toByteArray())
             }
             
+            // Создаем URI с правильными разрешениями
             FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",
@@ -110,16 +113,19 @@ class TrackDetailViewModel @Inject constructor(
         return try {
             val geoJsonContent = geoJsonGenerator.generateGeoJson(track, trackPoints)
             val fileName = "track_${track.id}_${getCurrentDateString()}.geojson"
-            val tracksDir = File(context.getExternalFilesDir(null), "tracks")
-            if (!tracksDir.exists()) {
-                tracksDir.mkdirs()
+            
+            // Создаем файл в кэш-директории для временного доступа
+            val cacheDir = File(context.cacheDir, "tracks")
+            if (!cacheDir.exists()) {
+                cacheDir.mkdirs()
             }
-            val file = File(tracksDir, fileName)
+            val file = File(cacheDir, fileName)
             
             FileOutputStream(file).use { fos ->
                 fos.write(geoJsonContent.toByteArray())
             }
             
+            // Создаем URI с правильными разрешениями
             FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",
@@ -188,18 +194,25 @@ class TrackDetailViewModel @Inject constructor(
         if (points.size < 2) return 0.0
         
         var totalGain = 0.0
-        var lastElevation: Double? = null
+        var lastValidElevation: Double? = null
         
-        points.forEach { point ->
-            point.altitude?.let { currentElevation ->
-                lastElevation?.let { last ->
-                    val gain = currentElevation - last
-                    if (gain > 0) {
-                        totalGain += gain
-                    }
+        // Фильтруем точки с валидными данными о высоте
+        val validPoints = points.filter { it.altitude != null && it.altitude!! > -1000 && it.altitude!! < 10000 }
+        
+        if (validPoints.size < 2) return 0.0
+        
+        validPoints.forEach { point ->
+            val currentElevation = point.altitude!!
+            
+            lastValidElevation?.let { last ->
+                val gain = currentElevation - last
+                // Добавляем только положительные изменения высоты (подъем)
+                // И игнорируем слишком большие скачки (возможные ошибки GPS)
+                if (gain > 0 && gain < 100) { // Максимальный разумный подъем за один шаг - 100м
+                    totalGain += gain
                 }
-                lastElevation = currentElevation
             }
+            lastValidElevation = currentElevation
         }
         
         return totalGain

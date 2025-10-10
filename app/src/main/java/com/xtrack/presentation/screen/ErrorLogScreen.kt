@@ -174,22 +174,17 @@ private fun shareLogFile(context: Context) {
             putExtra(Intent.EXTRA_STREAM, uri)
             putExtra(Intent.EXTRA_SUBJECT, "TrackingApp Error Logs")
             putExtra(Intent.EXTRA_TEXT, "Логи ошибок TrackingApp для анализа")
+            // Важно: добавляем флаги разрешений для URI
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         }
         
-        // Предоставляем временные разрешения для URI
-        val packageManager = context.packageManager
-        val activities = packageManager.queryIntentActivities(intent, 0)
-        activities.forEach { activity ->
-            context.grantUriPermission(
-                activity.activityInfo.packageName,
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
+        // Создаем chooser intent с правильными разрешениями
+        val chooserIntent = Intent.createChooser(intent, "Отправить логи").apply {
+            // Добавляем флаг для предоставления разрешений через chooser
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         
-        context.startActivity(Intent.createChooser(intent, "Отправить логи"))
+        context.startActivity(chooserIntent)
     } catch (e: Exception) {
         ErrorLogger.logError(context, e, "Failed to share log file")
     }

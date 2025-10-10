@@ -12,6 +12,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.xtrack.R
 import com.xtrack.data.model.MapNote
 import com.xtrack.data.model.Point
@@ -44,6 +46,82 @@ fun MapView(
     // Состояние для отслеживания ошибок MapKit
     var mapKitError by remember { mutableStateOf<String?>(null) }
     
+    // Кэш для иконок, чтобы не создавать их каждый раз
+    var locationIcon by remember {
+        mutableStateOf<ImageProvider?>(null)
+    }
+    
+    var noteIcon by remember {
+        mutableStateOf<ImageProvider?>(null)
+    }
+    
+    // Функция для создания иконки местоположения в фоновом потоке
+    suspend fun createLocationIcon(): ImageProvider = withContext(Dispatchers.Default) {
+        android.util.Log.d("MapView", "Creating location icon in background thread")
+        val bitmap = android.graphics.Bitmap.createBitmap(48, 48, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        
+        // Рисуем золотой круг
+        val backgroundPaint = android.graphics.Paint().apply {
+            color = 0xFFFFD700.toInt() // Золотой цвет
+            isAntiAlias = true
+        }
+        canvas.drawCircle(24f, 24f, 20f, backgroundPaint)
+        
+        // Рисуем белый круг внутри
+        val innerPaint = android.graphics.Paint().apply {
+            color = 0xFFFFFFFF.toInt() // Белый цвет
+            isAntiAlias = true
+        }
+        canvas.drawCircle(24f, 24f, 16f, innerPaint)
+        
+        // Рисуем глаза
+        val eyePaint = android.graphics.Paint().apply {
+            color = 0xFF000000.toInt() // Черный цвет
+            isAntiAlias = true
+        }
+        canvas.drawCircle(18f, 18f, 2f, eyePaint)
+        canvas.drawCircle(30f, 18f, 2f, eyePaint)
+        
+        // Рисуем улыбку
+        val smilePaint = android.graphics.Paint().apply {
+            color = 0xFF000000.toInt() // Черный цвет
+            strokeWidth = 2f
+            style = android.graphics.Paint.Style.STROKE
+            isAntiAlias = true
+            strokeCap = android.graphics.Paint.Cap.ROUND
+        }
+        val smilePath = android.graphics.Path()
+        smilePath.moveTo(18f, 28f)
+        smilePath.quadTo(24f, 34f, 30f, 28f)
+        canvas.drawPath(smilePath, smilePaint)
+        
+        ImageProvider.fromBitmap(bitmap)
+    }
+    
+    // Функция для создания иконки заметки в фоновом потоке
+    suspend fun createNoteIcon(): ImageProvider = withContext(Dispatchers.Default) {
+        android.util.Log.d("MapView", "Creating note icon in background thread")
+        val bitmap = android.graphics.Bitmap.createBitmap(32, 32, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        
+        // Создаем синий круг для заметки
+        val backgroundPaint = android.graphics.Paint().apply {
+            color = 0xFF2196F3.toInt() // Синий цвет
+            isAntiAlias = true
+        }
+        canvas.drawCircle(16f, 16f, 14f, backgroundPaint)
+        
+        // Добавляем белую точку в центре
+        val centerPaint = android.graphics.Paint().apply {
+            color = 0xFFFFFFFF.toInt() // Белый цвет
+            isAntiAlias = true
+        }
+        canvas.drawCircle(16f, 16f, 6f, centerPaint)
+        
+        ImageProvider.fromBitmap(bitmap)
+    }
+    
     // Сохраняем состояние камеры
     var cameraPosition by remember { 
         mutableStateOf(
@@ -52,6 +130,25 @@ fun MapView(
                 15.0f, 0.0f, 0.0f
             )
         ) 
+    }
+    
+    // Предварительно создаем иконки при инициализации
+    LaunchedEffect(Unit) {
+        try {
+            if (locationIcon == null) {
+                locationIcon = createLocationIcon()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MapView", "Failed to pre-create location icon", e)
+        }
+        
+        try {
+            if (noteIcon == null) {
+                noteIcon = createNoteIcon()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MapView", "Failed to pre-create note icon", e)
+        }
     }
     
     // Флаг для отслеживания первого запуска
@@ -182,48 +279,26 @@ fun MapView(
                     
                     // Устанавливаем простую иконку для текущего местоположения
                     try {
-                        android.util.Log.d("MapView", "Creating simple emoji icon programmatically")
-                        val bitmap = android.graphics.Bitmap.createBitmap(48, 48, android.graphics.Bitmap.Config.ARGB_8888)
-                        val canvas = android.graphics.Canvas(bitmap)
-                        
-                        // Рисуем золотой круг
-                        val backgroundPaint = android.graphics.Paint().apply {
-                            color = 0xFFFFD700.toInt() // Золотой цвет
-                            isAntiAlias = true
+                        val iconToUse = if (locationIcon == null) {
+                            // Если иконка еще не создана, используем стандартную
+                            android.util.Log.w("MapView", "Location icon not pre-created, using standard icon")
+                            null
+                        } else {
+                            locationIcon!!
                         }
-                        canvas.drawCircle(24f, 24f, 20f, backgroundPaint)
                         
-                        // Рисуем белый круг внутри
-                        val innerPaint = android.graphics.Paint().apply {
-                            color = 0xFFFFFFFF.toInt() // Белый цвет
-                            isAntiAlias = true
+                        if (iconToUse != null) {
+                            placemark.setIcon(iconToUse)
+                            // android.util.Log.d("MapView", "Programmatic emoji icon set successfully")
+                        } else {
+                            // Используем стандартную иконку если кастомная не готова
+                            try {
+                                placemark.setIcon(ImageProvider.fromResource(context, android.R.drawable.ic_menu_mylocation))
+                                android.util.Log.d("MapView", "Using standard location icon")
+                            } catch (e2: Exception) {
+                                android.util.Log.e("MapView", "Failed to set standard location icon", e2)
+                            }
                         }
-                        canvas.drawCircle(24f, 24f, 16f, innerPaint)
-                        
-                        // Рисуем глаза
-                        val eyePaint = android.graphics.Paint().apply {
-                            color = 0xFF000000.toInt() // Черный цвет
-                            isAntiAlias = true
-                        }
-                        canvas.drawCircle(18f, 18f, 2f, eyePaint)
-                        canvas.drawCircle(30f, 18f, 2f, eyePaint)
-                        
-                        // Рисуем улыбку
-                        val smilePaint = android.graphics.Paint().apply {
-                            color = 0xFF000000.toInt() // Черный цвет
-                            strokeWidth = 2f
-                            style = android.graphics.Paint.Style.STROKE
-                            isAntiAlias = true
-                            strokeCap = android.graphics.Paint.Cap.ROUND
-                        }
-                        val smilePath = android.graphics.Path()
-                        smilePath.moveTo(18f, 28f)
-                        smilePath.quadTo(24f, 34f, 30f, 28f)
-                        canvas.drawPath(smilePath, smilePaint)
-                        
-                        val imageProvider = ImageProvider.fromBitmap(bitmap)
-                        placemark.setIcon(imageProvider)
-                        android.util.Log.d("MapView", "Programmatic emoji icon set successfully")
                     } catch (e: Exception) {
                         android.util.Log.e("MapView", "Failed to set programmatic emoji icon", e)
                         // Если и это не работает, используем стандартную иконку
@@ -299,33 +374,33 @@ fun MapView(
                 // Добавляем заметки на карту
                 android.util.Log.d("MapView", "Adding ${notes.size} notes to map")
                 notes.forEach { note ->
-                    android.util.Log.d("MapView", "Adding note: ${note.title} at ${note.latitude}, ${note.longitude}")
+                    // Уменьшаем логирование для производительности
+                    // android.util.Log.d("MapView", "Adding note: ${note.title} at ${note.latitude}, ${note.longitude}")
                     val notePoint = YandexPoint(note.latitude, note.longitude)
                     val placemark = map.mapObjects.addPlacemark(notePoint)
                     
                     // Устанавливаем иконку для заметки программно
                     try {
-                        android.util.Log.d("MapView", "Creating programmatic icon for note: ${note.title}")
-                        val bitmap = android.graphics.Bitmap.createBitmap(32, 32, android.graphics.Bitmap.Config.ARGB_8888)
-                        val canvas = android.graphics.Canvas(bitmap)
-                        
-                        // Создаем синий круг для заметки
-                        val backgroundPaint = android.graphics.Paint().apply {
-                            color = 0xFF2196F3.toInt() // Синий цвет
-                            isAntiAlias = true
+                        val iconToUse = if (noteIcon == null) {
+                            // Если иконка еще не создана, используем стандартную
+                            android.util.Log.w("MapView", "Note icon not pre-created, using standard icon")
+                            null
+                        } else {
+                            noteIcon!!
                         }
-                        canvas.drawCircle(16f, 16f, 14f, backgroundPaint)
                         
-                        // Добавляем белую точку в центре
-                        val centerPaint = android.graphics.Paint().apply {
-                            color = 0xFFFFFFFF.toInt() // Белый цвет
-                            isAntiAlias = true
+                        if (iconToUse != null) {
+                            placemark.setIcon(iconToUse)
+                            // android.util.Log.d("MapView", "Programmatic icon set successfully for note: ${note.title}")
+                        } else {
+                            // Используем стандартную иконку если кастомная не готова
+                            try {
+                                placemark.setIcon(ImageProvider.fromResource(context, android.R.drawable.ic_menu_mylocation))
+                                android.util.Log.d("MapView", "Using standard icon for note: ${note.title}")
+                            } catch (e2: Exception) {
+                                android.util.Log.e("MapView", "Failed to set standard icon for note: ${note.title}", e2)
+                            }
                         }
-                        canvas.drawCircle(16f, 16f, 6f, centerPaint)
-                        
-                        val imageProvider = ImageProvider.fromBitmap(bitmap)
-                        placemark.setIcon(imageProvider)
-                        android.util.Log.d("MapView", "Programmatic icon set successfully for note: ${note.title}")
                     } catch (e: Exception) {
                         android.util.Log.e("MapView", "Failed to set programmatic icon for note: ${note.title}", e)
                         // Fallback к стандартной иконке Android

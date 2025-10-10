@@ -15,6 +15,9 @@ interface TrackDao {
     @Query("SELECT * FROM tracks WHERE isRecording = 1 LIMIT 1")
     suspend fun getCurrentRecordingTrack(): Track?
 
+    @Query("SELECT * FROM tracks WHERE isRecording = 0 AND endedAt IS NULL ORDER BY startedAt DESC LIMIT 1")
+    suspend fun getLastIncompleteTrack(): Track?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTrack(track: Track)
 

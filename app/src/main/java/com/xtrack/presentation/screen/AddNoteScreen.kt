@@ -69,7 +69,7 @@ fun AddNoteScreen(
     // Функция для запуска камеры с проверкой разрешений
     fun launchCamera() {
         if (cameraPermissionState.status.isGranted) {
-            val mediaDir = File(context.getExternalFilesDir(null), "temp")
+            val mediaDir = File(context.cacheDir, "temp")
             if (!mediaDir.exists()) {
                 mediaDir.mkdirs()
             }
@@ -88,7 +88,7 @@ fun AddNoteScreen(
     // Функция для запуска видеозаписи с проверкой разрешений
     fun launchVideoRecorder() {
         if (cameraPermissionState.status.isGranted && audioPermissionState.status.isGranted) {
-            val mediaDir = File(context.getExternalFilesDir(null), "temp")
+            val mediaDir = File(context.cacheDir, "temp")
             if (!mediaDir.exists()) {
                 mediaDir.mkdirs()
             }

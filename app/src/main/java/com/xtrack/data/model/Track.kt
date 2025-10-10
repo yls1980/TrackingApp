@@ -13,6 +13,7 @@ data class Track(
     val endedAt: Instant?,
     val distanceMeters: Double,
     val durationSec: Long,
+    val elevationGainMeters: Double = 0.0, // Набор высоты в метрах
     val gpxPath: String?,
     val geojsonPath: String?,
     val isRecording: Boolean = false

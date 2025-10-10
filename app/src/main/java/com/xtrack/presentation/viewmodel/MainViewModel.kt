@@ -19,6 +19,9 @@ import com.xtrack.data.repository.TrackRepository
 import com.xtrack.service.LocationTrackingService
 import com.xtrack.utils.ErrorLogger
 import com.xtrack.utils.LocationUtils
+import com.xtrack.utils.RateLimitedLogger
+import com.xtrack.data.model.AppSettings
+import com.xtrack.data.model.AppExitState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -49,6 +52,9 @@ class MainViewModel @Inject constructor(
 
     private val _currentLocation = MutableStateFlow<Point?>(null)
     val currentLocation: StateFlow<Point?> = _currentLocation.asStateFlow()
+    
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
     val allTracks: StateFlow<List<Track>> = trackRepository.getAllTracks()
         .stateIn(
@@ -58,29 +64,32 @@ class MainViewModel @Inject constructor(
         )
 
     init {
-        // Сначала пытаемся очистить базу данных при проблемах с миграцией
-        clearDatabaseIfNeeded()
+        // Инициализируем настройки и проверяем состояние записи
+        initializeSettings()
         checkCurrentRecording()
         loadLastLocation()
         // Автоматически позиционируемся на текущую/последнюю точку при запуске
         centerOnCurrentOrLastLocation()
     }
     
-    private fun clearDatabaseIfNeeded() {
+    private fun initializeSettings() {
         viewModelScope.launch {
             try {
-                // Пытаемся получить настройки - если это не удается, значит проблема с миграцией
+                // Пытаемся получить настройки - если это не удается, Room автоматически 
+                // применит fallbackToDestructiveMigration() из TrackingDatabase
                 settingsRepository.getSettingsSync()
+                ErrorLogger.logMessage(
+                    getApplication(),
+                    "Settings loaded successfully during initialization",
+                    ErrorLogger.LogLevel.INFO
+                )
             } catch (e: Exception) {
-                if (e.message?.contains("Room cannot verify the data integrity") == true) {
-                    ErrorLogger.logMessage(
-                        getApplication(),
-                        "Database migration failed, clearing database",
-                        ErrorLogger.LogLevel.WARNING
-                    )
-                    // Очищаем базу данных
-                    com.xtrack.data.database.TrackingDatabase.clearDatabase(getApplication())
-                }
+                ErrorLogger.logError(
+                    getApplication(),
+                    e,
+                    "Failed to load settings during initialization - Room will handle migration automatically"
+                )
+                // Room автоматически применит fallbackToDestructiveMigration() при следующем обращении к БД
             }
         }
     }
@@ -88,27 +97,85 @@ class MainViewModel @Inject constructor(
     private fun checkCurrentRecording() {
         viewModelScope.launch {
             try {
-                val currentRecordingTrack = trackRepository.getCurrentRecordingTrack()
-                if (currentRecordingTrack != null) {
-                    _isRecording.value = true
-                    _currentTrack.value = currentRecordingTrack
-                    loadTrackPoints(currentRecordingTrack.id)
-                    ErrorLogger.logMessage(
-                        getApplication(),
-                        "Found active recording track: ${currentRecordingTrack.id}",
-                        ErrorLogger.LogLevel.INFO
-                    )
-                } else {
-                    // Проверяем сохраненное состояние записи
-                    val settings = settingsRepository.getSettingsSync()
-                    if (settings?.wasRecordingOnExit == true) {
+                // Сначала проверяем, действительно ли сервис работает
+                val isServiceRunning = com.xtrack.utils.ServiceUtils.isServiceRunning(
+                    getApplication(), 
+                    LocationTrackingService::class.java
+                )
+                
+                if (isServiceRunning) {
+                    // Сервис работает - проверяем активный трек
+                    val currentRecordingTrack = trackRepository.getCurrentRecordingTrack()
+                    if (currentRecordingTrack != null) {
+                        _isRecording.value = true
+                        _currentTrack.value = currentRecordingTrack
+                        loadTrackPoints(currentRecordingTrack.id)
                         ErrorLogger.logMessage(
                             getApplication(),
-                            "App was recording on exit, but no active track found. This might indicate an unexpected shutdown.",
-                            ErrorLogger.LogLevel.WARNING
+                            "Service is running, found active recording track: ${currentRecordingTrack.id}",
+                            ErrorLogger.LogLevel.INFO
                         )
-                        // Сбрасываем флаг, так как активной записи нет
-                        settingsRepository.updateSettings(settings.copy(wasRecordingOnExit = false))
+                    } else {
+                        // Позиционируемся на карте
+                        centerOnCurrentOrLastLocation()
+                        
+                        ErrorLogger.logMessage(
+                            getApplication(),
+                            "Service is running but no active track found - normal state after emergency stop",
+                            ErrorLogger.LogLevel.INFO
+                        )
+                    }
+                } else {
+                    // Сервис не работает - проверяем состояние приложения при выходе
+                    val settings = settingsRepository.getSettingsSync()
+                    
+                    when (settings?.appExitState) {
+                        AppExitState.RECORDING -> {
+                            ErrorLogger.logMessage(
+                                getApplication(),
+                                "App was recording on exit, but service is not running. Attempting to resume recording.",
+                                ErrorLogger.LogLevel.INFO
+                            )
+                            
+                            // Сначала выполняем аварийную остановку для завершения предыдущего трека
+                            performEmergencyStop()
+                            
+                            // Затем пытаемся восстановить запись трека
+                            resumeRecordingAfterAppRestart()
+                        }
+                        
+                        AppExitState.STOPPED -> {
+                            ErrorLogger.logMessage(
+                                getApplication(),
+                                "App was stopped normally on exit - initializing without recording",
+                                ErrorLogger.LogLevel.INFO
+                            )
+                            
+                            // Приложение было остановлено нормально (зеленая кнопка)
+                            // Просто позиционируемся на карте без статистики и записи
+                            _isRecording.value = false
+                            _currentTrack.value = null
+                            _trackPoints.value = emptyList()
+                            
+                            // Позиционируемся на текущую GPS позицию или последнюю сохраненную
+                            centerOnCurrentOrLastLocation()
+                        }
+                        
+                        null -> {
+                            // Настройки не найдены - безопасная инициализация
+                            ErrorLogger.logMessage(
+                                getApplication(),
+                                "No app exit state found - initializing in stopped state",
+                                ErrorLogger.LogLevel.INFO
+                            )
+                            
+                            _isRecording.value = false
+                            _currentTrack.value = null
+                            _trackPoints.value = emptyList()
+                            
+                            // Позиционируемся на карте
+                            centerOnCurrentOrLastLocation()
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -117,6 +184,10 @@ class MainViewModel @Inject constructor(
                     e,
                     "Failed to check current recording state"
                 )
+                // В случае ошибки инициализируем в состоянии остановки
+                _isRecording.value = false
+                _currentTrack.value = null
+                _trackPoints.value = emptyList()
             }
         }
     }
@@ -124,15 +195,14 @@ class MainViewModel @Inject constructor(
     private fun loadLastLocation() {
         viewModelScope.launch {
             try {
-                lastLocationRepository.getLastLocation().collect { lastLocation ->
-                    lastLocation?.let { location ->
-                        _currentLocation.value = Point(location.latitude, location.longitude)
-                        ErrorLogger.logMessage(
-                            getApplication(),
-                            "Last location loaded: ${location.latitude}, ${location.longitude}",
-                            ErrorLogger.LogLevel.INFO
-                        )
-                    }
+                val lastLocation = lastLocationRepository.getLastLocation().first()
+                lastLocation?.let { location ->
+                    _currentLocation.value = Point(location.latitude, location.longitude)
+                    ErrorLogger.logMessage(
+                        getApplication(),
+                        "Last location loaded: ${location.latitude}, ${location.longitude}",
+                        ErrorLogger.LogLevel.INFO
+                    )
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // Игнорируем отмену корутины - это нормальное поведение при уничтожении ViewModel
@@ -154,6 +224,32 @@ class MainViewModel @Inject constructor(
     fun startRecording() {
         viewModelScope.launch {
             try {
+                // Проверяем, включена ли геолокация на устройстве
+                if (!LocationUtils.isLocationEnabled(getApplication())) {
+                    _errorMessage.value = "Включите геолокацию на устройстве для начала записи маршрута"
+                    ErrorLogger.logMessage(
+                        getApplication(),
+                        "Cannot start recording: location services are disabled",
+                        ErrorLogger.LogLevel.WARNING
+                    )
+                    return@launch
+                }
+                
+                // Проверяем разрешения на геолокацию
+                if (ContextCompat.checkSelfPermission(
+                        getApplication(),
+                        Manifest.permission.ACCESS_FINE_LOCATION
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    _errorMessage.value = "Разрешите доступ к геолокации для записи маршрута"
+                    ErrorLogger.logMessage(
+                        getApplication(),
+                        "Cannot start recording: location permission not granted",
+                        ErrorLogger.LogLevel.WARNING
+                    )
+                    return@launch
+                }
+                
                 val intent = Intent(getApplication(), LocationTrackingService::class.java).apply {
                     action = LocationTrackingService.ACTION_START_RECORDING
                 }
@@ -162,7 +258,7 @@ class MainViewModel @Inject constructor(
                 
                 // Сохраняем состояние записи в настройках
                 val settings = settingsRepository.getSettingsSync() ?: com.xtrack.data.model.AppSettings()
-                settingsRepository.updateSettings(settings.copy(wasRecordingOnExit = true))
+                settingsRepository.updateSettings(settings.copy(appExitState = AppExitState.RECORDING))
                 
                 ErrorLogger.logMessage(
                     getApplication(),
@@ -170,6 +266,7 @@ class MainViewModel @Inject constructor(
                     ErrorLogger.LogLevel.INFO
                 )
             } catch (e: Exception) {
+                _errorMessage.value = "Ошибка при запуске записи: ${e.message}"
                 ErrorLogger.logError(
                     getApplication(),
                     e,
@@ -177,6 +274,10 @@ class MainViewModel @Inject constructor(
                 )
             }
         }
+    }
+    
+    fun clearErrorMessage() {
+        _errorMessage.value = null
     }
 
     fun stopRecording() {
@@ -210,7 +311,7 @@ class MainViewModel @Inject constructor(
                 
                 // Сохраняем состояние остановки записи в настройках
                 val settings = settingsRepository.getSettingsSync() ?: com.xtrack.data.model.AppSettings()
-                settingsRepository.updateSettings(settings.copy(wasRecordingOnExit = false))
+                settingsRepository.updateSettings(settings.copy(appExitState = AppExitState.STOPPED))
                 
                 ErrorLogger.logMessage(
                     getApplication(),
@@ -330,10 +431,12 @@ class MainViewModel @Inject constructor(
                     location?.let { loc ->
                         val point = Point(loc.latitude, loc.longitude)
                         _currentLocation.value = point
-                        ErrorLogger.logMessage(
+                        // Используем RateLimitedLogger чтобы не спамить при частых обновлениях текущей позиции
+                        RateLimitedLogger.logMessage(
                             getApplication(),
                             "Current location updated: ${loc.latitude}, ${loc.longitude}",
-                            ErrorLogger.LogLevel.INFO
+                            ErrorLogger.LogLevel.INFO,
+                            key = "current_location_updated"
                         )
                     }
                 } else {
@@ -424,6 +527,156 @@ class MainViewModel @Inject constructor(
                 )
                 continuation.resume(null)
             }
+    }
+    
+    /**
+     * Выполняет аварийную остановку для завершения предыдущего трека
+     */
+    private fun performEmergencyStop() {
+        viewModelScope.launch {
+            try {
+                ErrorLogger.logMessage(
+                    getApplication(),
+                    "Performing emergency stop to finalize any incomplete tracks",
+                    ErrorLogger.LogLevel.INFO
+                )
+                
+                // Отправляем команду аварийной остановки в сервис
+                val emergencyIntent = Intent(getApplication(), LocationTrackingService::class.java).apply {
+                    action = LocationTrackingService.ACTION_EMERGENCY_STOP
+                }
+                getApplication<Application>().startService(emergencyIntent)
+                
+                // Небольшая задержка для завершения аварийной остановки
+                kotlinx.coroutines.delay(1000)
+                
+            } catch (e: Exception) {
+                ErrorLogger.logError(
+                    getApplication(),
+                    e,
+                    "Failed to perform emergency stop"
+                )
+            }
+        }
+    }
+    
+    /**
+     * Восстанавливает запись трека после перезапуска приложения
+     */
+    private fun resumeRecordingAfterAppRestart() {
+        viewModelScope.launch {
+            try {
+                // Ищем последний незавершенный трек
+                val lastIncompleteTrack = trackRepository.getLastIncompleteTrack()
+                
+                if (lastIncompleteTrack != null) {
+                    ErrorLogger.logMessage(
+                        getApplication(),
+                        "Found incomplete track to resume: ${lastIncompleteTrack.id}",
+                        ErrorLogger.LogLevel.INFO
+                    )
+                    
+                    // Получаем точки этого трека
+                    val trackPoints = trackRepository.getTrackPointsSync(lastIncompleteTrack.id)
+                    
+                    if (trackPoints.isNotEmpty()) {
+                        // Обновляем UI с найденным треком
+                        _currentTrack.value = lastIncompleteTrack
+                        _trackPoints.value = trackPoints
+                        _isRecording.value = true
+                        
+                        // Позиционируемся на последнюю точку трека
+                        val lastPoint = trackPoints.last()
+                        _currentLocation.value = Point(lastPoint.latitude, lastPoint.longitude)
+                        
+                        // Запускаем сервис записи для продолжения
+                        val intent = Intent(getApplication(), LocationTrackingService::class.java).apply {
+                            action = LocationTrackingService.ACTION_START_RECORDING
+                        }
+                        getApplication<Application>().startService(intent)
+                        
+                        // Сохраняем состояние записи
+                        val settings = settingsRepository.getSettingsSync() ?: AppSettings()
+                        settingsRepository.updateSettings(settings.copy(appExitState = AppExitState.RECORDING))
+                        
+                        ErrorLogger.logMessage(
+                            getApplication(),
+                            "Recording resumed for track: ${lastIncompleteTrack.id} with ${trackPoints.size} existing points",
+                            ErrorLogger.LogLevel.INFO
+                        )
+                        
+                    } else {
+                        // Трек без точек - удаляем его
+                        trackRepository.deleteTrackById(lastIncompleteTrack.id)
+                        ErrorLogger.logMessage(
+                            getApplication(),
+                            "Deleted incomplete track with no points: ${lastIncompleteTrack.id}",
+                            ErrorLogger.LogLevel.INFO
+                        )
+                        
+                        // Сбрасываем состояние
+                        _isRecording.value = false
+                        _currentTrack.value = null
+                        _trackPoints.value = emptyList()
+                        
+                        // Очищаем флаг записи и позиционируемся на карте
+                        val settings = settingsRepository.getSettingsSync() ?: AppSettings()
+                        settingsRepository.updateSettings(settings.copy(appExitState = AppExitState.STOPPED))
+                        
+                        // Позиционируемся на карте после очистки
+                        centerOnCurrentOrLastLocation()
+                    }
+                } else {
+                    ErrorLogger.logMessage(
+                        getApplication(),
+                        "No incomplete track found to resume",
+                        ErrorLogger.LogLevel.INFO
+                    )
+                    
+                    // Сбрасываем состояние
+                    _isRecording.value = false
+                    _currentTrack.value = null
+                    _trackPoints.value = emptyList()
+                    
+                    // Очищаем флаг записи и позиционируемся на карте
+                    val settings = settingsRepository.getSettingsSync() ?: AppSettings()
+                    settingsRepository.updateSettings(settings.copy(appExitState = AppExitState.STOPPED))
+                    
+                    // Позиционируемся на карте
+                    centerOnCurrentOrLastLocation()
+                }
+                
+            } catch (e: Exception) {
+                ErrorLogger.logError(
+                    getApplication(),
+                    e,
+                    "Failed to resume recording after app restart"
+                )
+                
+                // В случае ошибки сбрасываем состояние
+                _isRecording.value = false
+                _currentTrack.value = null
+                _trackPoints.value = emptyList()
+                
+                // Очищаем флаг записи и позиционируемся на карте
+                try {
+                    val settings = settingsRepository.getSettingsSync() ?: AppSettings()
+                    settingsRepository.updateSettings(settings.copy(appExitState = AppExitState.STOPPED))
+                    
+                    // Позиционируемся на карте после ошибки
+                    centerOnCurrentOrLastLocation()
+                } catch (settingsError: Exception) {
+                    ErrorLogger.logError(
+                        getApplication(),
+                        settingsError,
+                        "Failed to clear recording flag after resume error"
+                    )
+                    
+                    // Все равно пытаемся позиционироваться
+                    centerOnCurrentOrLastLocation()
+                }
+            }
+        }
     }
 }
 

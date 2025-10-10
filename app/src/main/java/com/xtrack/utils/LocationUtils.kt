@@ -1,6 +1,9 @@
 package com.xtrack.utils
 
+import android.content.Context
 import android.location.Location
+import android.location.LocationManager
+import android.os.Build
 import com.xtrack.data.model.Point
 import java.util.Locale
 import kotlin.math.*
@@ -41,6 +44,24 @@ object LocationUtils {
         var totalDistance = 0.0
         for (i in 1 until points.size) {
             totalDistance += calculateDistance(points[i - 1], points[i])
+        }
+        return totalDistance
+    }
+    
+    /**
+     * Calculate total distance for a list of TrackPoints
+     */
+    fun calculateTotalDistanceFromTrackPoints(trackPoints: List<com.xtrack.data.model.TrackPoint>): Double {
+        if (trackPoints.size < 2) return 0.0
+        
+        var totalDistance = 0.0
+        for (i in 1 until trackPoints.size) {
+            val prevPoint = trackPoints[i - 1]
+            val currentPoint = trackPoints[i]
+            totalDistance += calculateDistance(
+                prevPoint.latitude, prevPoint.longitude,
+                currentPoint.latitude, currentPoint.longitude
+            )
         }
         return totalDistance
     }
@@ -115,6 +136,22 @@ object LocationUtils {
                location.accuracy <= maxAccuracy && 
                location.latitude != 0.0 && 
                location.longitude != 0.0
+    }
+    
+    /**
+     * Проверяет, включена ли геолокация на устройстве
+     */
+    fun isLocationEnabled(context: Context): Boolean {
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            // Для Android 9.0+
+            locationManager?.isLocationEnabled ?: false
+        } else {
+            // Для более старых версий проверяем провайдеры
+            val gpsEnabled = locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) ?: false
+            val networkEnabled = locationManager?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) ?: false
+            gpsEnabled || networkEnabled
+        }
     }
 }
 

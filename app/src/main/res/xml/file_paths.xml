@@ -5,5 +5,8 @@
     <external-files-path name="media" path="media/" />
     <external-files-path name="temp" path="temp/" />
     <files-path name="internal_tracks" path="tracks/" />
+    <cache-path name="cache_tracks" path="tracks/" />
+    <cache-path name="cache_temp" path="temp/" />
+    <cache-path name="cache_exports" path="all_notes_export/" />
 </paths>
 

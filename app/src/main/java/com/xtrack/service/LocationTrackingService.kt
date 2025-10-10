@@ -28,6 +28,7 @@ import com.xtrack.service.BufferedPointsSyncService
 import com.xtrack.utils.ErrorLogger
 import com.xtrack.utils.NetworkUtils
 import com.xtrack.utils.LocationUtils
+import com.xtrack.utils.RateLimitedLogger
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -55,6 +56,8 @@ class LocationTrackingService : LifecycleService() {
     private var lastLocation: Location? = null
     private var totalDistance = 0.0
     private var startTime: kotlinx.datetime.Instant? = null
+    private var totalDistanceMeters = 0f
+    private var lastNotificationDistance = 0f
     private var locationCounter = 0
 
     companion object {
@@ -64,6 +67,7 @@ class LocationTrackingService : LifecycleService() {
         const val ACTION_STOP_RECORDING = "stop_recording"
         const val ACTION_PAUSE_RECORDING = "pause_recording"
         const val ACTION_RESUME_RECORDING = "resume_recording"
+        const val ACTION_EMERGENCY_STOP = "emergency_stop"
     }
 
     override fun onCreate() {
@@ -85,6 +89,7 @@ class LocationTrackingService : LifecycleService() {
             ACTION_STOP_RECORDING -> stopRecording()
             ACTION_PAUSE_RECORDING -> pauseRecording()
             ACTION_RESUME_RECORDING -> resumeRecording()
+            ACTION_EMERGENCY_STOP -> emergencyStop()
         }
         
         return START_STICKY
@@ -96,10 +101,20 @@ class LocationTrackingService : LifecycleService() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 getString(R.string.notification_channel_name),
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT // Изменено с LOW на DEFAULT для включения звука
             ).apply {
                 description = getString(R.string.notification_channel_description)
                 setShowBadge(false)
+                // Включаем звук уведомлений
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 500, 200, 500) // Паттерн вибрации
+                setSound(
+                    android.provider.Settings.System.DEFAULT_NOTIFICATION_URI,
+                    android.media.AudioAttributes.Builder()
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                        .build()
+                )
             }
 
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -124,11 +139,12 @@ class LocationTrackingService : LifecycleService() {
             }
             
             override fun onLocationAvailability(locationAvailability: LocationAvailability) {
-                // Логируем только изменения доступности, а не каждое обновление
-                ErrorLogger.logMessage(
+                // Используем RateLimitedLogger чтобы не спамить в логи при частых изменениях
+                RateLimitedLogger.logMessage(
                     this@LocationTrackingService,
                     "Location availability changed: isLocationAvailable=${locationAvailability.isLocationAvailable}",
-                    ErrorLogger.LogLevel.INFO
+                    ErrorLogger.LogLevel.INFO,
+                    key = "location_availability_${locationAvailability.isLocationAvailable}"
                 )
             }
         }
@@ -139,20 +155,24 @@ class LocationTrackingService : LifecycleService() {
             try {
                 NetworkUtils.networkStateFlow(this@LocationTrackingService).collect { isNetworkAvailable ->
                     if (isNetworkAvailable) {
-                        ErrorLogger.logMessage(
+                        // Используем RateLimitedLogger чтобы не спамить при частых переключениях сети
+                        RateLimitedLogger.logMessage(
                             this@LocationTrackingService,
                             "Network available, syncing buffered points",
-                            ErrorLogger.LogLevel.INFO
+                            ErrorLogger.LogLevel.INFO,
+                            key = "network_available"
                         )
                         // Синхронизируем буферизованные точки при восстановлении сети
                         bufferedPointsSyncService.syncAllBufferedPoints()
                         // Очищаем синхронизированные точки
                         bufferedPointsSyncService.cleanupSyncedPoints()
                     } else {
-                        ErrorLogger.logMessage(
+                        // Используем RateLimitedLogger чтобы не спамить при частых переключениях сети
+                        RateLimitedLogger.logMessage(
                             this@LocationTrackingService,
                             "Network unavailable, points will be buffered",
-                            ErrorLogger.LogLevel.WARNING
+                            ErrorLogger.LogLevel.WARNING,
+                            key = "network_unavailable"
                         )
                     }
                 }
@@ -176,26 +196,62 @@ class LocationTrackingService : LifecycleService() {
     }
 
     private fun startRecording() {
-        if (currentTrack != null) return // Already recording
-
         lifecycleScope.launch {
             try {
-                val settings = settingsRepository.getSettings().first() ?: AppSettings()
+                // Сначала убеждаемся, что настройки инициализированы
+                settingsRepository.insertDefaultSettings()
+                val settings = settingsRepository.getSettingsSync() ?: AppSettings()
                 ErrorLogger.logMessage(
                     this@LocationTrackingService,
                     "Starting recording with settings: interval=${settings.locationIntervalMs}ms, accuracy=${settings.locationAccuracy}",
                     ErrorLogger.LogLevel.INFO
                 )
                 
-                // Проверяем доступность GPS перед созданием маршрута
+                // Если уже есть активный трек, просто возобновляем запись
+                if (currentTrack != null) {
+                    ErrorLogger.logMessage(
+                        this@LocationTrackingService,
+                        "Resuming recording for existing track: ${currentTrack?.id}",
+                        ErrorLogger.LogLevel.INFO
+                    )
+                    startLocationUpdates(settings)
+                    return@launch
+                }
+                
+                // Проверяем, есть ли незавершенный трек для продолжения
+                val existingTrack = trackRepository.getLastIncompleteTrack()
+                if (existingTrack != null) {
+                    ErrorLogger.logMessage(
+                        this@LocationTrackingService,
+                        "Found existing incomplete track to resume: ${existingTrack.id}",
+                        ErrorLogger.LogLevel.INFO
+                    )
+                    currentTrack = existingTrack
+                    startLocationUpdates(settings)
+                    return@launch
+                }
+                
+                // Создаем новый трек
+                ErrorLogger.logMessage(
+                    this@LocationTrackingService,
+                    "Creating new track",
+                    ErrorLogger.LogLevel.INFO
+                )
+                
+                // Проверяем доступность GPS, но не блокируем запуск
                 val currentLocation = getCurrentLocationSync()
                 if (currentLocation == null) {
                     ErrorLogger.logMessage(
                         this@LocationTrackingService,
-                        "GPS not available, cannot start recording",
-                        ErrorLogger.LogLevel.WARNING
+                        "GPS not available at start, will wait for first location update",
+                        ErrorLogger.LogLevel.INFO
                     )
-                    return@launch
+                } else {
+                    ErrorLogger.logMessage(
+                        this@LocationTrackingService,
+                        "GPS available at start, current location: ${currentLocation.latitude}, ${currentLocation.longitude}",
+                        ErrorLogger.LogLevel.INFO
+                    )
                 }
             
             // Create new track
@@ -216,6 +272,8 @@ class LocationTrackingService : LifecycleService() {
             
             startTime = now
             totalDistance = 0.0
+            totalDistanceMeters = 0f
+            lastNotificationDistance = 0f
             
             // Save track to database
             currentTrack?.let { track ->
@@ -274,51 +332,39 @@ class LocationTrackingService : LifecycleService() {
     private fun stopRecording() {
         lifecycleScope.launch {
             currentTrack?.let { track ->
-                // Проверяем, есть ли реальные точки геопозиции в маршруте
+                // Сначала синхронизируем буферизованные точки
+                try {
+                    ErrorLogger.logMessage(
+                        this@LocationTrackingService,
+                        "Starting buffered points sync for track: ${track.id}",
+                        ErrorLogger.LogLevel.INFO
+                    )
+                    bufferedPointsSyncService.syncAllBufferedPoints()
+                    ErrorLogger.logMessage(
+                        this@LocationTrackingService,
+                        "Buffered points synced before checking track validity",
+                        ErrorLogger.LogLevel.INFO
+                    )
+                } catch (e: Exception) {
+                    ErrorLogger.logError(
+                        this@LocationTrackingService,
+                        e,
+                        "Failed to sync buffered points before saving track"
+                    )
+                }
+                
+                // Теперь проверяем, есть ли реальные точки геопозиции в маршруте
                 val trackPoints = trackRepository.getTrackPointsSync(track.id)
                 
                 if (trackPoints.isEmpty()) {
-                    // Если точек нет, удаляем маршрут
+                    // Если точек нет даже после синхронизации, удаляем маршрут
                     trackRepository.deleteTrackById(track.id)
                     ErrorLogger.logMessage(
                         this@LocationTrackingService,
-                        "Track deleted - no GPS points recorded: ${track.id}",
+                        "Track deleted - no GPS points recorded after sync: ${track.id}",
                         ErrorLogger.LogLevel.INFO
                     )
                 } else {
-                    // Синхронизируем буферизованные точки перед сохранением маршрута
-                    val syncJob = lifecycleScope.launch {
-                        try {
-                            ErrorLogger.logMessage(
-                                this@LocationTrackingService,
-                                "Starting buffered points sync for track: ${track.id}",
-                                ErrorLogger.LogLevel.INFO
-                            )
-                            bufferedPointsSyncService.syncAllBufferedPoints()
-                            ErrorLogger.logMessage(
-                                this@LocationTrackingService,
-                                "Buffered points synced before saving track",
-                                ErrorLogger.LogLevel.INFO
-                            )
-                        } catch (e: Exception) {
-                            ErrorLogger.logError(
-                                this@LocationTrackingService,
-                                e,
-                                "Failed to sync buffered points before saving track"
-                            )
-                        }
-                    }
-                    
-                    // Ждем завершения синхронизации
-                    try {
-                        syncJob.join()
-                    } catch (e: Exception) {
-                        ErrorLogger.logError(
-                            this@LocationTrackingService,
-                            e,
-                            "Failed to wait for buffered points sync"
-                        )
-                    }
                     
                     // Получаем актуальное количество точек после синхронизации
                     val finalTrackPoints = trackRepository.getTrackPoints(track.id).first()
@@ -339,6 +385,9 @@ class LocationTrackingService : LifecycleService() {
                         totalDistance
                     }
                     
+                    // Рассчитываем набор высоты
+                    val elevationGain = calculateElevationGain(finalTrackPoints)
+                    
                     // Если есть точки, сохраняем маршрут
                     val updatedTrack = track.copy(
                         endedAt = Clock.System.now(),
@@ -346,7 +395,8 @@ class LocationTrackingService : LifecycleService() {
                         durationSec = startTime?.let { 
                             Clock.System.now().epochSeconds - it.epochSeconds 
                         } ?: 0,
-                        distanceMeters = recalculatedDistance
+                        distanceMeters = recalculatedDistance,
+                        elevationGainMeters = elevationGain
                     )
                     
                     trackRepository.updateTrack(updatedTrack)
@@ -362,6 +412,24 @@ class LocationTrackingService : LifecycleService() {
             
             stopLocationUpdates()
             stopForeground(true)
+            
+            // Сохраняем состояние остановки записи в настройках
+            try {
+                val settings = settingsRepository.getSettingsSync() ?: AppSettings()
+                settingsRepository.updateSettings(settings.copy(appExitState = com.xtrack.data.model.AppExitState.STOPPED))
+                ErrorLogger.logMessage(
+                    this@LocationTrackingService,
+                    "Recording state cleared in settings",
+                    ErrorLogger.LogLevel.INFO
+                )
+            } catch (e: Exception) {
+                ErrorLogger.logError(
+                    this@LocationTrackingService,
+                    e,
+                    "Failed to clear recording state in settings"
+                )
+            }
+            
             stopSelf()
         }
     }
@@ -445,28 +513,38 @@ class LocationTrackingService : LifecycleService() {
     }
 
     private fun onLocationUpdate(location: Location) {
-        // Логируем только важные обновления местоположения (каждое 10-е или при изменении точности)
-        if (locationCounter % 10 == 0 || location.accuracy < 5.0) {
-            ErrorLogger.logMessage(
-                this@LocationTrackingService,
-                "Location update received: lat=${location.latitude}, lon=${location.longitude}, accuracy=${location.accuracy}m",
-                ErrorLogger.LogLevel.INFO
-            )
-        }
+        // Логируем только важные обновления местоположения с ограничением частоты
+        RateLimitedLogger.logMessage(
+            this@LocationTrackingService,
+            "Location update received: lat=${location.latitude}, lon=${location.longitude}, accuracy=${location.accuracy}m",
+            ErrorLogger.LogLevel.INFO,
+            "location_update"
+        )
         locationCounter++
         
         if (!com.xtrack.utils.LocationUtils.isLocationValid(location)) {
-            ErrorLogger.logMessage(
+            // Используем RateLimitedLogger чтобы не спамить при частых некорректных координатах
+            RateLimitedLogger.logMessage(
                 this@LocationTrackingService,
                 "Invalid location received, skipping: accuracy=${location.accuracy}m, lat=${location.latitude}, lon=${location.longitude}",
-                ErrorLogger.LogLevel.WARNING
+                ErrorLogger.LogLevel.WARNING,
+                key = "invalid_location"
             )
             return
         }
 
         lifecycleScope.launch {
             try {
-                val settings = settingsRepository.getSettings().first() ?: AppSettings()
+                // Сначала убеждаемся, что настройки инициализированы
+                settingsRepository.insertDefaultSettings()
+                val settings = settingsRepository.getSettingsSync() ?: AppSettings()
+                
+                // Логируем загрузку настроек для отладки
+                ErrorLogger.logMessage(
+                    this@LocationTrackingService,
+                    "Settings loaded: distanceNotificationsEnabled=${settings.distanceNotificationsEnabled}, interval=${settings.distanceNotificationIntervalMeters}m",
+                    ErrorLogger.LogLevel.INFO
+                )
                 
                 // Check accuracy threshold - логируем только при превышении порога
                 if (location.accuracy > settings.accuracyThresholdMeters) {
@@ -478,10 +556,12 @@ class LocationTrackingService : LifecycleService() {
                 }
                 
                 if (location.accuracy > settings.accuracyThresholdMeters) {
-                    ErrorLogger.logMessage(
+                    // Используем RateLimitedLogger чтобы не спамить при частых превышениях порога точности
+                    RateLimitedLogger.logMessage(
                         this@LocationTrackingService,
                         "Location accuracy too low (${location.accuracy}m > ${settings.accuracyThresholdMeters}m), skipping point",
-                        ErrorLogger.LogLevel.WARNING
+                        ErrorLogger.LogLevel.WARNING,
+                        key = "accuracy_too_low"
                     )
                     return@launch
                 }
@@ -495,26 +575,39 @@ class LocationTrackingService : LifecycleService() {
                                 location.latitude, location.longitude
                             )
                             
-                            // Логируем расстояние только при превышении минимального порога
+                            // Логируем расстояние только при превышении минимального порога с ограничением частоты
                             if (distance >= settings.minDistanceMeters) {
-                                ErrorLogger.logMessage(
+                                RateLimitedLogger.logMessage(
                                     this@LocationTrackingService,
                                     "Distance from last point: ${distance}m, min distance: ${settings.minDistanceMeters}m",
-                                    ErrorLogger.LogLevel.INFO
+                                    ErrorLogger.LogLevel.INFO,
+                                    "distance_check"
                                 )
                             }
                             
                             // Skip if distance is too small (same location)
                             if (distance < settings.minDistanceMeters) {
-                                ErrorLogger.logMessage(
+                                // Используем RateLimitedLogger чтобы не спамить при частых маленьких расстояниях
+                                RateLimitedLogger.logMessage(
                                     this@LocationTrackingService,
                                     "Distance too small (${distance}m < ${settings.minDistanceMeters}m), skipping point",
-                                    ErrorLogger.LogLevel.WARNING
+                                    ErrorLogger.LogLevel.WARNING,
+                                    key = "distance_too_small"
                                 )
                                 return@launch
                             }
                             
                             totalDistance += distance
+                            totalDistanceMeters += distance.toFloat()
+                            
+                            // Проверяем, нужно ли показать уведомление о пройденном расстоянии
+                            if (settings.distanceNotificationsEnabled) {
+                                val notificationInterval = settings.distanceNotificationIntervalMeters
+                                if (totalDistanceMeters - lastNotificationDistance >= notificationInterval) {
+                                    lastNotificationDistance = totalDistanceMeters
+                                    showDistanceNotification(totalDistanceMeters)
+                                }
+                            }
                         }
 
                         // Create track point
@@ -537,14 +630,13 @@ class LocationTrackingService : LifecycleService() {
                             if (networkAvailable) {
                                 // Если есть интернет, сохраняем напрямую
                                 trackRepository.insertTrackPoint(trackPoint)
-                                // Логируем сохранение только каждое 20-е или при проблемах с сетью
-                                if (locationCounter % 20 == 0) {
-                                    ErrorLogger.logMessage(
-                                        this@LocationTrackingService,
-                                        "Track point saved directly: ${trackPoint.latitude}, ${trackPoint.longitude} for track: ${track.id}",
-                                        ErrorLogger.LogLevel.INFO
-                                    )
-                                }
+                                // Логируем сохранение с ограничением частоты
+                                RateLimitedLogger.logMessage(
+                                    this@LocationTrackingService,
+                                    "Track point saved directly: ${trackPoint.latitude}, ${trackPoint.longitude} for track: ${track.id}",
+                                    ErrorLogger.LogLevel.INFO,
+                                    "track_point_saved"
+                                )
                             } else {
                                 // Если нет интернета, буферизуем точку
                                 bufferedPointsSyncService.addPointToBuffer(
@@ -668,6 +760,21 @@ class LocationTrackingService : LifecycleService() {
 
     private fun updateNotification() {
         try {
+            // Проверяем разрешение на показ уведомлений (только для Android 13+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) 
+                    != PackageManager.PERMISSION_GRANTED) {
+                    // Используем RateLimitedLogger чтобы не спамить в логи
+                    RateLimitedLogger.logMessage(
+                        this,
+                        "POST_NOTIFICATIONS permission not granted, cannot update notification",
+                        ErrorLogger.LogLevel.WARNING,
+                        key = "post_notifications_permission_update"
+                    )
+                    return
+                }
+            }
+            
             val notification = createNotification()
             val notificationManager = NotificationManagerCompat.from(this)
             notificationManager.notify(NOTIFICATION_ID, notification)
@@ -715,9 +822,195 @@ class LocationTrackingService : LifecycleService() {
         }
     }
 
+    private fun calculateElevationGain(trackPoints: List<com.xtrack.data.model.TrackPoint>): Double {
+        if (trackPoints.size < 2) return 0.0
+        
+        var totalGain = 0.0
+        var lastValidElevation: Double? = null
+        
+        // Фильтруем точки с валидными данными о высоте
+        val validPoints = trackPoints.filter { 
+            it.altitude != null && it.altitude!! > -1000 && it.altitude!! < 10000 
+        }
+        
+        if (validPoints.size < 2) return 0.0
+        
+        validPoints.forEach { point ->
+            val currentElevation = point.altitude!!
+            
+            lastValidElevation?.let { last ->
+                val gain = currentElevation - last
+                // Добавляем только положительные изменения высоты (подъем)
+                // И игнорируем слишком большие скачки (возможные ошибки GPS)
+                if (gain > 0 && gain < 100) { // Максимальный разумный подъем за один шаг - 100м
+                    totalGain += gain
+                }
+            }
+            lastValidElevation = currentElevation
+        }
+        
+        return totalGain
+    }
+
+    private fun showDistanceNotification(distanceMeters: Float) {
+        try {
+            val notificationManager = NotificationManagerCompat.from(this)
+            
+            // Проверяем разрешение на показ уведомлений (только для Android 13+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) 
+                    != PackageManager.PERMISSION_GRANTED) {
+                    // Используем RateLimitedLogger чтобы не спамить в логи
+                    RateLimitedLogger.logMessage(
+                        this,
+                        "POST_NOTIFICATIONS permission not granted, cannot show distance notification",
+                        ErrorLogger.LogLevel.WARNING,
+                        key = "post_notifications_permission_distance"
+                    )
+                    return
+                }
+            }
+            
+            val distanceText = if (distanceMeters >= 1000) {
+                "${String.format("%.1f", distanceMeters / 1000)} км"
+            } else {
+                "${distanceMeters.toInt()} м"
+            }
+            
+            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_location_on)
+                .setContentTitle("Маршрут записывается")
+                .setContentText("Пройдено: $distanceText")
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT) // Изменено с LOW на DEFAULT для звука
+                .setAutoCancel(true)
+                .setDefaults(NotificationCompat.DEFAULT_ALL) // Включаем звук, вибрацию и свет
+                .setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI) // Явно указываем звук
+                .setVibrate(longArrayOf(0, 500, 200, 500)) // Паттерн вибрации
+                .build()
+            
+            // Используем уникальный ID для каждого уведомления о расстоянии
+            val notificationId = (System.currentTimeMillis() % Int.MAX_VALUE).toInt()
+            notificationManager.notify(notificationId, notification)
+            
+            ErrorLogger.logMessage(
+                this,
+                "Distance notification shown: $distanceText",
+                ErrorLogger.LogLevel.INFO
+            )
+            
+        } catch (e: Exception) {
+            ErrorLogger.logError(
+                this,
+                e,
+                "Failed to show distance notification"
+            )
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         stopLocationUpdates()
+    }
+    
+    /**
+     * Аварийная остановка записи при неожиданном завершении приложения
+     */
+    private fun emergencyStop() {
+        lifecycleScope.launch {
+            try {
+                ErrorLogger.logMessage(
+                    this@LocationTrackingService,
+                    "Emergency stop triggered - finalizing current track if exists",
+                    ErrorLogger.LogLevel.WARNING
+                )
+                
+                currentTrack?.let { track ->
+                    // Сначала синхронизируем буферизованные точки
+                    try {
+                        bufferedPointsSyncService.syncAllBufferedPoints()
+                        ErrorLogger.logMessage(
+                            this@LocationTrackingService,
+                            "Buffered points synced during emergency stop",
+                            ErrorLogger.LogLevel.INFO
+                        )
+                    } catch (e: Exception) {
+                        ErrorLogger.logError(
+                            this@LocationTrackingService,
+                            e,
+                            "Failed to sync buffered points during emergency stop"
+                        )
+                    }
+                    
+                    // Получаем все точки трека
+                    val trackPoints = trackRepository.getTrackPointsSync(track.id)
+                    
+                    if (trackPoints.isNotEmpty()) {
+                        // Пересчитываем расстояние
+                        val recalculatedDistance = com.xtrack.utils.LocationUtils.calculateTotalDistanceFromTrackPoints(trackPoints)
+                        val elevationGain = calculateElevationGain(trackPoints)
+                        
+                        // Сохраняем трек как завершенный
+                        val updatedTrack = track.copy(
+                            endedAt = Clock.System.now(),
+                            isRecording = false,
+                            durationSec = startTime?.let { 
+                                Clock.System.now().epochSeconds - it.epochSeconds 
+                            } ?: 0,
+                            distanceMeters = recalculatedDistance,
+                            elevationGainMeters = elevationGain
+                        )
+                        
+                        trackRepository.updateTrack(updatedTrack)
+                        ErrorLogger.logMessage(
+                            this@LocationTrackingService,
+                            "Emergency stop: Track saved with ${trackPoints.size} GPS points, distance: ${recalculatedDistance}m",
+                            ErrorLogger.LogLevel.INFO
+                        )
+                    } else {
+                        // Нет точек - удаляем трек
+                        trackRepository.deleteTrackById(track.id)
+                        ErrorLogger.logMessage(
+                            this@LocationTrackingService,
+                            "Emergency stop: Track deleted - no GPS points recorded",
+                            ErrorLogger.LogLevel.INFO
+                        )
+                    }
+                }
+                
+                // Очищаем состояние
+                currentTrack = null
+                stopLocationUpdates()
+                stopForeground(true)
+                
+                // Очищаем состояние записи в настройках
+                try {
+                    val settings = settingsRepository.getSettingsSync() ?: AppSettings()
+                    settingsRepository.updateSettings(settings.copy(appExitState = com.xtrack.data.model.AppExitState.STOPPED))
+                    ErrorLogger.logMessage(
+                        this@LocationTrackingService,
+                        "Emergency stop: Recording state cleared in settings",
+                        ErrorLogger.LogLevel.INFO
+                    )
+                } catch (e: Exception) {
+                    ErrorLogger.logError(
+                        this@LocationTrackingService,
+                        e,
+                        "Failed to clear recording state during emergency stop"
+                    )
+                }
+                
+                stopSelf()
+                
+            } catch (e: Exception) {
+                ErrorLogger.logError(
+                    this@LocationTrackingService,
+                    e,
+                    "Failed to perform emergency stop"
+                )
+                // Принудительно останавливаем сервис даже при ошибке
+                stopSelf()
+            }
+        }
     }
 }
 

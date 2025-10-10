@@ -3,6 +3,7 @@ package com.xtrack.utils
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileOutputStream
 import java.io.PrintWriter
@@ -19,31 +20,41 @@ object ErrorLogger {
     private const val LOG_FILE_NAME = "app_errors.log"
     private const val MAX_LOG_SIZE = 5 * 1024 * 1024 // 5MB
     
+    // Глобальная область корутин для фонового логирования
+    private val loggingScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    
+    // Ограничиваем частоту INFO логов
+    private var lastInfoLogTime = 0L
+    private const val INFO_LOG_THROTTLE_MS = 1000L // 1 секунда между INFO логами
+    
     /**
      * Логирование ошибки в файл
      */
     fun logError(context: Context, throwable: Throwable, additionalInfo: String = "") {
-        try {
-            val logFile = getLogFile(context)
-            
-            // Проверяем размер файла и очищаем если слишком большой
-            if (logFile.exists() && logFile.length() > MAX_LOG_SIZE) {
-                archiveOldLog(context, logFile)
+        // Сначала выводим в logcat (быстро, на главном потоке)
+        Log.e(TAG, "Error logged: $additionalInfo", throwable)
+        
+        // Затем записываем в файл в фоновом потоке
+        loggingScope.launch {
+            try {
+                val logFile = getLogFile(context)
+                
+                // Проверяем размер файла и очищаем если слишком большой
+                if (logFile.exists() && logFile.length() > MAX_LOG_SIZE) {
+                    archiveOldLog(context, logFile)
+                }
+                
+                val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
+                val errorMessage = buildErrorMessage(timestamp, throwable, additionalInfo)
+                
+                // Записываем в файл
+                FileOutputStream(logFile, true).use { fos ->
+                    fos.write(errorMessage.toByteArray())
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to log error to file", e)
             }
-            
-            val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
-            val errorMessage = buildErrorMessage(timestamp, throwable, additionalInfo)
-            
-            // Записываем в файл
-            FileOutputStream(logFile, true).use { fos ->
-                fos.write(errorMessage.toByteArray())
-            }
-            
-            // Также выводим в logcat
-            Log.e(TAG, "Error logged: $additionalInfo", throwable)
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to log error", e)
         }
     }
     
@@ -51,31 +62,44 @@ object ErrorLogger {
      * Логирование простого сообщения
      */
     fun logMessage(context: Context, message: String, level: LogLevel = LogLevel.INFO) {
-        try {
-            val logFile = getLogFile(context)
-            val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
-            
-            val logMessage = """
-                ========================================
-                [$level] $timestamp
-                Message: $message
-                ========================================
+        // Всегда выводим в logcat (быстро, на главном потоке)
+        when (level) {
+            LogLevel.ERROR -> Log.e(TAG, message)
+            LogLevel.WARNING -> Log.w(TAG, message)
+            LogLevel.INFO -> Log.i(TAG, message)
+            LogLevel.DEBUG -> Log.d(TAG, message)
+        }
+        
+        // Для INFO логов применяем троттлинг
+        if (level == LogLevel.INFO) {
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastInfoLogTime < INFO_LOG_THROTTLE_MS) {
+                return // Пропускаем этот INFO лог
+            }
+            lastInfoLogTime = currentTime
+        }
+        
+        // Записываем в файл в фоновом потоке
+        loggingScope.launch {
+            try {
+                val logFile = getLogFile(context)
+                val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
                 
-            """.trimIndent()
-            
-            FileOutputStream(logFile, true).use { fos ->
-                fos.write(logMessage.toByteArray())
+                val logMessage = """
+                    ========================================
+                    [$level] $timestamp
+                    Message: $message
+                    ========================================
+                    
+                """.trimIndent()
+                
+                FileOutputStream(logFile, true).use { fos ->
+                    fos.write(logMessage.toByteArray())
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to log message to file", e)
             }
-            
-            when (level) {
-                LogLevel.ERROR -> Log.e(TAG, message)
-                LogLevel.WARNING -> Log.w(TAG, message)
-                LogLevel.INFO -> Log.i(TAG, message)
-                LogLevel.DEBUG -> Log.d(TAG, message)
-            }
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to log message", e)
         }
     }
     

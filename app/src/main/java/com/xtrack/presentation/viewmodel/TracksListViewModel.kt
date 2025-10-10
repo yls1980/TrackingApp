@@ -1,19 +1,30 @@
 package com.xtrack.presentation.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xtrack.data.model.Track
+import com.xtrack.data.repository.MapNoteRepository
 import com.xtrack.data.repository.TrackRepository
+import com.xtrack.utils.ErrorLogger
 import com.xtrack.utils.LocationUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 @HiltViewModel
 class TracksListViewModel @Inject constructor(
-    private val trackRepository: TrackRepository
+    private val trackRepository: TrackRepository,
+    private val noteRepository: MapNoteRepository
 ) : ViewModel() {
+
+    init {
+        // Инициализируем кэш заметок при создании ViewModel
+        updateNotesCache()
+    }
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -68,6 +79,8 @@ class TracksListViewModel @Inject constructor(
     fun deleteTrack(track: Track) {
         viewModelScope.launch {
             trackRepository.deleteTrack(track)
+            // Обновляем кэш после удаления трека
+            updateNotesCache()
         }
     }
 
@@ -77,6 +90,40 @@ class TracksListViewModel @Inject constructor(
 
     fun formatDuration(durationSeconds: Long): String {
         return LocationUtils.formatDuration(durationSeconds)
+    }
+
+    // Кэш для проверки наличия заметок, чтобы избежать блокировки UI
+    private val notesCache = mutableMapOf<String, Boolean>()
+    
+    fun hasNotes(trackId: String): Boolean {
+        // Возвращаем кэшированное значение или false по умолчанию
+        return notesCache[trackId] ?: false
+    }
+    
+    // Функция для обновления кэша заметок
+    private fun updateNotesCache() {
+        viewModelScope.launch {
+            try {
+                // Получаем все заметки и группируем по trackId
+                val allNotes = noteRepository.getAllMapNotes().first()
+                val notesByTrack = allNotes.groupBy { it.trackId }
+                
+                // Обновляем кэш
+                notesCache.clear()
+                notesByTrack.forEach { (trackId, notes) ->
+                    notesCache[trackId] = notes.isNotEmpty()
+                }
+                
+                android.util.Log.d("TracksListViewModel", "Notes cache updated: ${notesCache.size} tracks")
+            } catch (e: Exception) {
+                android.util.Log.e("TracksListViewModel", "Failed to update notes cache", e)
+            }
+        }
+    }
+    
+    // Публичная функция для обновления кэша извне (например, после создания заметки)
+    fun refreshNotesCache() {
+        updateNotesCache()
     }
 
     enum class SortOrder {

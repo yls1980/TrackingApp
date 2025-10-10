@@ -11,7 +11,7 @@ import javax.inject.Singleton
 class SettingsRepository @Inject constructor(
     private val appSettingsDao: AppSettingsDao
 ) {
-    fun getSettings(): Flow<AppSettings> = appSettingsDao.getSettings()
+    fun getSettings(): Flow<AppSettings?> = appSettingsDao.getSettings()
 
     suspend fun getSettingsSync(): AppSettings? = appSettingsDao.getSettingsSync()
 

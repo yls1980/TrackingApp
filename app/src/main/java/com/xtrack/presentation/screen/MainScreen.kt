@@ -27,16 +27,31 @@ fun MainScreen(
     val currentTrack by viewModel.currentTrack.collectAsStateWithLifecycle()
     val trackPoints by viewModel.trackPoints.collectAsStateWithLifecycle()
     val currentLocation by viewModel.currentLocation.collectAsStateWithLifecycle()
+    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    
+    val snackbarHostState = remember { SnackbarHostState() }
     
     // Логируем состояние для диагностики
     LaunchedEffect(Unit) {
         android.util.Log.d("MainScreen", "MainScreen initialized with onNavigateToAddNote: ${onNavigateToAddNote != null}")
     }
     
+    // Показываем сообщение об ошибке
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let { message ->
+            snackbarHostState.showSnackbar(
+                message = message,
+                duration = SnackbarDuration.Long
+            )
+            viewModel.clearErrorMessage()
+        }
+    }
+    
     // Состояние для центрирования карты
     var centerOnLocation by remember { mutableStateOf(false) }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Трекер маршрутов") },
@@ -116,10 +131,10 @@ fun MainScreen(
                 }
             }
 
-            // Statistics
-            currentTrack?.let { track ->
+            // Statistics - показываем только если идет запись
+            if (isRecording && currentTrack != null) {
                 StatisticsCard(
-                    track = track,
+                    track = currentTrack!!,
                     trackPoints = trackPoints,
                     modifier = Modifier.padding(16.dp)
                 )

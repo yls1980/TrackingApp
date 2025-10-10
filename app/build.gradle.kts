@@ -131,6 +131,9 @@ dependencies {
     // Yandex MapKit
     implementation("com.yandex.android:maps.mobile:4.5.1-full")
     
+    // JSON parsing
+    implementation("com.google.code.gson:gson:2.10.1")
+    
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     

@@ -6,6 +6,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.xtrack.presentation.screen.AddNoteScreen
 import com.xtrack.presentation.screen.ErrorLogScreen
+import com.xtrack.presentation.screen.ImportTrackScreen
 import com.xtrack.presentation.screen.MainScreen
 import com.xtrack.presentation.screen.NoteDetailScreen
 import com.xtrack.presentation.screen.NotesListScreen
@@ -19,7 +20,8 @@ import com.xtrack.presentation.viewmodel.MainViewModel
 fun TrackingNavigation(
     mainViewModel: MainViewModel,
     navController: NavHostController,
-    onExitApp: () -> Unit = {}
+    onExitApp: () -> Unit = {},
+    onKillApp: () -> Unit = {}
 ) {
     NavHost(
         navController = navController,
@@ -47,6 +49,17 @@ fun TrackingNavigation(
                 },
                 onNavigateToTrackDetail = { trackId ->
                     navController.navigate("track_detail/$trackId")
+                },
+                onNavigateToImport = {
+                    navController.navigate("import_track")
+                }
+            )
+        }
+        
+        composable("import_track") {
+            ImportTrackScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
                 }
             )
         }
@@ -75,7 +88,8 @@ fun TrackingNavigation(
                 onNavigateToNotesMap = {
                     navController.navigate("notes_map_center")
                 },
-                onExitApp = onExitApp
+                onExitApp = onExitApp,
+                onKillApp = onKillApp
             )
         }
         

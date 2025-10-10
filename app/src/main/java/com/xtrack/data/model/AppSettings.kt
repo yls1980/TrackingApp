@@ -15,7 +15,9 @@ data class AppSettings(
     val autoPauseSpeedThreshold: Float = 1.0f, // m/s
     val autoPauseDurationSec: Long = 30L,
     val defaultExportFormat: ExportFormat = ExportFormat.GPX,
-    val wasRecordingOnExit: Boolean = false // Сохраняем состояние записи при выходе
+    val appExitState: AppExitState = AppExitState.STOPPED, // Состояние приложения при выходе
+    val distanceNotificationIntervalMeters: Int = 1000, // Интервал уведомлений о расстоянии (100-5000 метров)
+    val distanceNotificationsEnabled: Boolean = false // Включить/выключить уведомления о расстоянии
 )
 
 enum class LocationAccuracy {
@@ -27,5 +29,10 @@ enum class LocationAccuracy {
 enum class ExportFormat {
     GPX,
     GEOJSON
+}
+
+enum class AppExitState {
+    STOPPED,        // Приложение было остановлено нормально (зеленая кнопка)
+    RECORDING       // Приложение было закрыто во время записи (красная кнопка)
 }
 

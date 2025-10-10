@@ -67,7 +67,8 @@ class NotesListViewModel @Inject constructor(
     fun deleteNote(note: MapNote) {
         viewModelScope.launch {
             try {
-                mapNoteRepository.deleteMapNote(note)
+                // Используем безопасное удаление с медиа файлами
+                mapNoteRepository.deleteNoteWithMedia(note)
                 
                 // Обновляем список заметок после удаления
                 val currentNotes = _notes.value.toMutableList()
@@ -77,7 +78,7 @@ class NotesListViewModel @Inject constructor(
                 context?.let { ctx ->
                     ErrorLogger.logMessage(
                         ctx,
-                        "Note deleted: ${note.title}",
+                        "Note and media files deleted: ${note.title}",
                         ErrorLogger.LogLevel.INFO
                     )
                 }

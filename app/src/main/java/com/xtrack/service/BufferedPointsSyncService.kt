@@ -214,11 +214,20 @@ class BufferedPointsSyncService @Inject constructor(
                 ErrorLogger.LogLevel.INFO
             )
         } catch (e: Exception) {
-            ErrorLogger.logError(
-                context,
-                e,
-                "Failed to cleanup synced points"
-            )
+            // Игнорируем CancellationException - это нормальная отмена корутины
+            if (e is kotlinx.coroutines.CancellationException) {
+                ErrorLogger.logMessage(
+                    context,
+                    "Cleanup synced points cancelled (normal behavior)",
+                    ErrorLogger.LogLevel.DEBUG
+                )
+            } else {
+                ErrorLogger.logError(
+                    context,
+                    e,
+                    "Failed to cleanup synced points"
+                )
+            }
         }
     }
 }

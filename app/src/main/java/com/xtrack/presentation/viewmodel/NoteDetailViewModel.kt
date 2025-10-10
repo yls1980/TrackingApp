@@ -47,8 +47,9 @@ class NoteDetailViewModel @Inject constructor(
     fun deleteNote(noteId: String) {
         viewModelScope.launch {
             try {
-                mapNoteRepository.deleteMapNote(noteId)
-                android.util.Log.i("NoteDetailViewModel", "Note deleted successfully: $noteId")
+                // Используем безопасное удаление с медиа файлами
+                mapNoteRepository.deleteNoteWithMediaById(noteId)
+                android.util.Log.i("NoteDetailViewModel", "Note and media files deleted successfully: $noteId")
             } catch (e: Exception) {
                 android.util.Log.e("NoteDetailViewModel", "Failed to delete note: $noteId", e)
                 _error.value = e.message

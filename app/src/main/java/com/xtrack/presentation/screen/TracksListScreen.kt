@@ -1,5 +1,8 @@
 package com.xtrack.presentation.screen
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -9,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -22,10 +26,18 @@ import com.xtrack.utils.LocationUtils
 fun TracksListScreen(
     onNavigateBack: () -> Unit,
     onNavigateToTrackDetail: (String) -> Unit,
+    onNavigateToImport: () -> Unit,
     viewModel: TracksListViewModel = hiltViewModel()
 ) {
+    val context = LocalContext.current
     val tracks by viewModel.filteredTracks.collectAsStateWithLifecycle()
     var showSortMenu by remember { mutableStateOf(false) }
+    
+    // Обновляем кэш заметок при входе на экран
+    LaunchedEffect(Unit) {
+        viewModel.refreshNotesCache()
+    }
+    
 
     Scaffold(
         topBar = {
@@ -37,6 +49,9 @@ fun TracksListScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onNavigateToImport) {
+                        Icon(Icons.Default.Upload, contentDescription = "Импорт")
+                    }
                     IconButton(onClick = { showSortMenu = true }) {
                         Icon(Icons.Default.Sort, contentDescription = "Сортировка")
                     }
@@ -102,6 +117,7 @@ fun TracksListScreen(
             onDismiss = { showSortMenu = false }
         )
     }
+
 }
 
 @Composable

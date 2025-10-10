@@ -215,7 +215,7 @@ private fun TrackDetailStatistics(
                 
                 StatisticItem(
                     label = "Набор высоты",
-                    value = "${viewModel.calculateElevationGain().toInt()} м"
+                    value = "${track.elevationGainMeters.toInt()} м"
                 )
             }
             
