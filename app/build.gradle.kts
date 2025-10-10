@@ -5,9 +5,28 @@ plugins {
     id("dagger.hilt.android.plugin")
 }
 
+import java.util.Properties
+import java.io.FileInputStream
+
 android {
     namespace = "com.xtrack"
     compileSdk = 34
+
+    // Настройки подписи
+    signingConfigs {
+        val keystorePropertiesFile = rootProject.file("keystore.properties")
+        val keystoreProperties = Properties()
+        if (keystorePropertiesFile.exists()) {
+            keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+        }
+        
+        create("release") {
+            storeFile = file(keystoreProperties.getProperty("storeFile") ?: "D:\\!yarik\\AndroidApp\\xtrack")
+            storePassword = keystoreProperties.getProperty("storePassword")
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+        }
+    }
 
     defaultConfig {
         applicationId = "com.xtrack"
@@ -48,7 +67,9 @@ android {
 
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

@@ -162,6 +162,9 @@ MIT License - смотрите [LICENSE](LICENSE) файл
 - **[FIX_GRADLE_ERROR.md](FIX_GRADLE_ERROR.md)** - исправление ошибок Gradle
 - **[FIX_THEME_ERROR.md](FIX_THEME_ERROR.md)** - исправление ошибок темы
 
+### Публикация
+- **[GOOGLE_PLAY_PUBLISH.md](GOOGLE_PLAY_PUBLISH.md)** - полное руководство по публикации в Google Play Store
+
 ## 🏗️ Архитектура
 
 Приложение построено на Clean Architecture с использованием MVVM паттерна:
