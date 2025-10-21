@@ -124,9 +124,10 @@ fun MainScreen(
                 }
             )
             
-            // Сбрасываем флаг центрирования после использования
+            // Сбрасываем флаг центрирования после небольшой задержки
             LaunchedEffect(centerOnLocation) {
                 if (centerOnLocation) {
+                    kotlinx.coroutines.delay(500) // Даем время карте обновиться
                     centerOnLocation = false
                 }
             }

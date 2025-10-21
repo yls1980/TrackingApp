@@ -75,6 +75,24 @@ cd TrackingApp
 ./gradlew installDebug
 ```
 
+### 📦 Сборка Release версии
+
+Для создания подписанного APK или AAB для распространения:
+
+**Для друзей и тестирования:**
+```bash
+./gradlew assembleRelease
+```
+APK будет в `app/build/outputs/apk/release/app-release.apk`
+
+**Для Google Play Store:**
+```bash
+./gradlew bundleRelease
+```
+AAB будет в `app/build/outputs/bundle/release/app-release.aab`
+
+📖 **Подробная инструкция:** см. [BUILD_RELEASE.md](BUILD_RELEASE.md)
+
 ## 📂 Структура проекта
 
 ```

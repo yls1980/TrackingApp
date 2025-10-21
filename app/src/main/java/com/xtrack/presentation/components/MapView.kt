@@ -312,6 +312,7 @@ fun MapView(
                     
                     // Центрируем карту на текущем местоположении при первом запуске или по запросу
                     if (isFirstLaunch || centerOnLocation) {
+                        android.util.Log.d("MapView", "Centering on location: ${location.latitude}, ${location.longitude}, isFirstLaunch=$isFirstLaunch, centerOnLocation=$centerOnLocation")
                         map.move(
                             CameraPosition(point, 15.0f, 0.0f, 0.0f),
                             Animation(Animation.Type.SMOOTH, 0.5f),
@@ -319,6 +320,11 @@ fun MapView(
                         )
                         cameraPosition = CameraPosition(point, 15.0f, 0.0f, 0.0f)
                         isFirstLaunch = false
+                    }
+                } ?: run {
+                    // Если нет текущего местоположения, логируем это
+                    if (centerOnLocation) {
+                        android.util.Log.w("MapView", "Cannot center on location: currentLocation is null")
                     }
                 }
                 

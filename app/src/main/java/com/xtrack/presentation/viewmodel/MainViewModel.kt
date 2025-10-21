@@ -422,27 +422,49 @@ class MainViewModel @Inject constructor(
     fun getCurrentLocation() {
         viewModelScope.launch {
             try {
+                // Проверяем, включена ли геолокация на устройстве
+                if (!LocationUtils.isLocationEnabled(getApplication())) {
+                    _errorMessage.value = "Геолокация отключена на устройстве. Включите GPS в настройках."
+                    ErrorLogger.logMessage(
+                        getApplication(),
+                        "Cannot get location: GPS is disabled",
+                        ErrorLogger.LogLevel.WARNING
+                    )
+                    return@launch
+                }
+                
+                // Проверяем разрешения на геолокацию
                 if (ContextCompat.checkSelfPermission(
                         getApplication(),
                         Manifest.permission.ACCESS_FINE_LOCATION
-                    ) == PackageManager.PERMISSION_GRANTED
+                    ) != PackageManager.PERMISSION_GRANTED
                 ) {
-                    val location = getLastKnownLocation()
-                    location?.let { loc ->
-                        val point = Point(loc.latitude, loc.longitude)
-                        _currentLocation.value = point
-                        // Используем RateLimitedLogger чтобы не спамить при частых обновлениях текущей позиции
-                        RateLimitedLogger.logMessage(
-                            getApplication(),
-                            "Current location updated: ${loc.latitude}, ${loc.longitude}",
-                            ErrorLogger.LogLevel.INFO,
-                            key = "current_location_updated"
-                        )
-                    }
-                } else {
+                    _errorMessage.value = "Нет доступа к геолокации. Разрешите доступ в настройках приложения."
                     ErrorLogger.logMessage(
                         getApplication(),
                         "Location permission not granted",
+                        ErrorLogger.LogLevel.WARNING
+                    )
+                    return@launch
+                }
+                
+                // Пытаемся получить текущее местоположение
+                val location = getLastKnownLocation()
+                if (location != null) {
+                    val point = Point(location.latitude, location.longitude)
+                    _currentLocation.value = point
+                    // Используем RateLimitedLogger чтобы не спамить при частых обновлениях текущей позиции
+                    RateLimitedLogger.logMessage(
+                        getApplication(),
+                        "Current location updated: ${location.latitude}, ${location.longitude}",
+                        ErrorLogger.LogLevel.INFO,
+                        key = "current_location_updated"
+                    )
+                } else {
+                    _errorMessage.value = "Не удалось определить текущее местоположение. Убедитесь, что GPS включен и имеет сигнал."
+                    ErrorLogger.logMessage(
+                        getApplication(),
+                        "Failed to get location: no last known location available",
                         ErrorLogger.LogLevel.WARNING
                     )
                 }
@@ -454,6 +476,7 @@ class MainViewModel @Inject constructor(
                     ErrorLogger.LogLevel.DEBUG
                 )
             } catch (e: Exception) {
+                _errorMessage.value = "Ошибка при определении местоположения: ${e.message}"
                 ErrorLogger.logError(
                     getApplication(),
                     e,
@@ -466,16 +489,20 @@ class MainViewModel @Inject constructor(
     fun centerOnCurrentOrLastLocation() {
         viewModelScope.launch {
             try {
+                var locationFound = false
+                
+                // Сначала пробуем получить текущее местоположение, если есть разрешения
                 if (ContextCompat.checkSelfPermission(
                         getApplication(),
                         Manifest.permission.ACCESS_FINE_LOCATION
-                    ) == PackageManager.PERMISSION_GRANTED
+                    ) == PackageManager.PERMISSION_GRANTED &&
+                    LocationUtils.isLocationEnabled(getApplication())
                 ) {
-                    // Сначала пробуем получить текущее местоположение
                     val location = getLastKnownLocation()
                     location?.let { loc ->
                         val point = Point(loc.latitude, loc.longitude)
                         _currentLocation.value = point
+                        locationFound = true
                         ErrorLogger.logMessage(
                             getApplication(),
                             "Centered on current location: ${loc.latitude}, ${loc.longitude}",
@@ -486,16 +513,28 @@ class MainViewModel @Inject constructor(
                 }
                 
                 // Если не удалось получить текущее местоположение, загружаем последнее сохраненное
-                lastLocationRepository.getLastLocation().collect { lastLocation ->
-                    lastLocation?.let { location ->
-                        _currentLocation.value = Point(location.latitude, location.longitude)
-                        ErrorLogger.logMessage(
-                            getApplication(),
-                            "Centered on last saved location: ${location.latitude}, ${location.longitude}",
-                            ErrorLogger.LogLevel.INFO
-                        )
+                if (!locationFound) {
+                    lastLocationRepository.getLastLocation().collect { lastLocation ->
+                        if (lastLocation != null) {
+                            _currentLocation.value = Point(lastLocation.latitude, lastLocation.longitude)
+                            locationFound = true
+                            ErrorLogger.logMessage(
+                                getApplication(),
+                                "Centered on last saved location: ${lastLocation.latitude}, ${lastLocation.longitude}",
+                                ErrorLogger.LogLevel.INFO
+                            )
+                        }
+                        return@collect // Получаем только первое значение
                     }
-                    return@collect // Получаем только первое значение
+                }
+                
+                // Если вообще не нашли никакой локации
+                if (!locationFound) {
+                    ErrorLogger.logMessage(
+                        getApplication(),
+                        "No location available for centering (no current or saved location)",
+                        ErrorLogger.LogLevel.WARNING
+                    )
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // Игнорируем отмену корутины - это нормальное поведение при уничтожении ViewModel
